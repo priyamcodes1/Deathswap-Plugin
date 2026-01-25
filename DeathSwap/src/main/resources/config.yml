@@ -1,0 +1,7 @@
+swap-interval-seconds: 300
+
+give-water-bucket-on-start: true
+give-food-on-start: true
+
+food-item: COOKED_BEEF
+food-amount: 16
