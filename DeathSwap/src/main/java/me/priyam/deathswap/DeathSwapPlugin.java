@@ -30,11 +30,16 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
     private int swapIntervalSeconds = 300;
     private int timeLeft = 0;
 
+    private int deathsBeforeGhost = 1;
+
     private BukkitTask timerTask = null;
     private BukkitTask fireworkTask = null;
 
     private final Set<UUID> ghostPlayers = new HashSet<>();
     private final Map<UUID, Integer> ghostSpectateIndex = new HashMap<>();
+
+    // death counter for alive players (and players who died but not eliminated yet)
+    private final Map<UUID, Integer> deathCounts = new HashMap<>();
 
     private Scoreboard scoreboard;
     private Objective objective;
@@ -67,6 +72,9 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
     private void loadSettings() {
         swapIntervalSeconds = getConfig().getInt("swap-interval-seconds", 300);
         if (swapIntervalSeconds < 10) swapIntervalSeconds = 10;
+
+        deathsBeforeGhost = getConfig().getInt("deaths-before-ghost", 1);
+        if (deathsBeforeGhost < 1) deathsBeforeGhost = 1;
     }
 
     private void setupScoreboard() {
@@ -81,17 +89,66 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
     private void updateScoreboardAll() {
         if (!running || scoreboard == null || objective == null) return;
 
+        // clear old lines
         for (String entry : scoreboard.getEntries()) {
             scoreboard.resetScores(entry);
         }
 
-        String timeLine = ChatColor.YELLOW + "Time Remaining: " + ChatColor.GREEN + formatTime(timeLeft);
+        // Build lines top->bottom using score values
+        // Scoreboard shows higher score at top
+        int score = 15;
 
-        objective.getScore(timeLine).setScore(1);
+        // Spacer
+        objective.getScore(" ").setScore(score--);
+
+        // Time line
+        String timeLine = ChatColor.YELLOW + "Time: " + ChatColor.GREEN + formatTime(timeLeft);
+        objective.getScore(makeUnique(timeLine, score)).setScore(score--);
+
+        // Show deaths section ONLY if deathsBeforeGhost > 1
+        if (deathsBeforeGhost > 1) {
+            objective.getScore("  ").setScore(score--);
+
+            String deathsHeader = ChatColor.GOLD + "Deaths:";
+            objective.getScore(makeUnique(deathsHeader, score)).setScore(score--);
+
+            // Only show players with deaths > 0, sorted high->low
+            List<Map.Entry<UUID, Integer>> entries = new ArrayList<>(deathCounts.entrySet());
+            entries.removeIf(e -> e.getValue() == null || e.getValue() <= 0);
+
+            entries.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+
+            int shown = 0;
+            for (Map.Entry<UUID, Integer> e : entries) {
+                if (shown >= 6) break; // keep scoreboard clean
+                Player p = Bukkit.getPlayer(e.getKey());
+                if (p == null) continue;
+
+                int d = e.getValue();
+                String line = ChatColor.YELLOW + p.getName() + ChatColor.GRAY + ": " + ChatColor.RED + d;
+
+                objective.getScore(makeUnique(line, score)).setScore(score--);
+                shown++;
+            }
+
+            // If nobody died yet, show nothing under Deaths: (clean)
+        }
+
+        objective.getScore("   ").setScore(score--);
 
         for (Player p : Bukkit.getOnlinePlayers()) {
             p.setScoreboard(scoreboard);
         }
+    }
+
+    // Make scoreboard entries unique even if text repeats
+    private String makeUnique(String base, int score) {
+        // scoreboard lines must be <= 40 chars, and unique
+        String suffix = ChatColor.COLOR_CHAR + "" + (char) ('a' + (score % 26));
+        String out = base;
+
+        if (out.length() > 38) out = out.substring(0, 38);
+        return out + suffix;
     }
 
     private void clearScoreboardAll() {
@@ -129,6 +186,11 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         running = true;
         ghostPlayers.clear();
         ghostSpectateIndex.clear();
+        deathCounts.clear();
+
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            deathCounts.put(p.getUniqueId(), 0);
+        }
 
         timeLeft = swapIntervalSeconds;
         updateScoreboardAll();
@@ -136,6 +198,7 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         giveStartItems(players);
 
         Bukkit.broadcastMessage(ChatColor.GREEN + "DeathSwap has started!");
+        Bukkit.broadcastMessage(ChatColor.GRAY + "Deaths before ghost: " + ChatColor.YELLOW + deathsBeforeGhost);
 
         timerTask = Bukkit.getScheduler().runTaskTimer(this, () -> {
             if (!running) return;
@@ -194,7 +257,7 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
 
         Collections.shuffle(locations);
 
-        // Ensure no one gets their own position (try a few times)
+        // retry a few times to reduce chance of self-swap
         for (int tries = 0; tries < 10; tries++) {
             boolean bad = false;
             for (int i = 0; i < alive.size(); i++) {
@@ -210,8 +273,6 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         for (int i = 0; i < alive.size(); i++) {
             Player p = alive.get(i);
             Location target = locations.get(i);
-
-            // Keep yaw/pitch from target location itself (which already has yaw/pitch)
             p.teleport(target);
         }
     }
@@ -240,8 +301,7 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
 
         List<Player> alive = getAlivePlayers();
         if (alive.size() == 1) {
-            Player winner = alive.get(0);
-            announceWinner(winner);
+            announceWinner(alive.get(0));
         } else if (alive.isEmpty()) {
             Bukkit.broadcastMessage(ChatColor.RED + "No one survived. Game ended.");
             stopGame(true);
@@ -254,8 +314,7 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         }
 
         startFireworks(winner);
-
-        Bukkit.getScheduler().runTaskLater(this, () -> stopGame(true), 100L); // 5 sec
+        Bukkit.getScheduler().runTaskLater(this, () -> stopGame(true), 100L);
     }
 
     private void startFireworks(Player winner) {
@@ -291,6 +350,7 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
 
         ghostPlayers.clear();
         ghostSpectateIndex.clear();
+        deathCounts.clear();
 
         clearScoreboardAll();
 
@@ -320,7 +380,6 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         p.setAllowFlight(false);
         p.setFlying(false);
 
-        // Remove compass
         for (ItemStack item : p.getInventory().getContents()) {
             if (item == null) continue;
             if (item.getType() == Material.COMPASS && item.hasItemMeta()) {
@@ -367,19 +426,28 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         if (!running) return;
 
         Player p = e.getEntity();
+        UUID id = p.getUniqueId();
+
+        int newDeaths = deathCounts.getOrDefault(id, 0) + 1;
+        deathCounts.put(id, newDeaths);
 
         Bukkit.getScheduler().runTaskLater(this, () -> {
             if (!p.isOnline()) return;
-            p.spigot().respawn();
-            enableGhost(p);
-            checkWinCondition();
-        }, 1L);
-    }
 
-    @EventHandler
-    public void onRespawn(PlayerRespawnEvent e) {
-        if (!running) return;
-        // keep normal respawn; ghost will be handled right after death
+            p.spigot().respawn();
+
+            // If deaths reached limit => ghost
+            if (newDeaths >= deathsBeforeGhost) {
+                enableGhost(p);
+                p.sendMessage(ChatColor.RED + "You are eliminated! (" + newDeaths + "/" + deathsBeforeGhost + ")");
+            } else {
+                p.sendMessage(ChatColor.YELLOW + "You died! (" + newDeaths + "/" + deathsBeforeGhost + ")");
+            }
+
+            updateScoreboardAll();
+            checkWinCondition();
+
+        }, 1L);
     }
 
     @EventHandler
@@ -437,13 +505,18 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         UUID id = e.getPlayer().getUniqueId();
         ghostPlayers.remove(id);
         ghostSpectateIndex.remove(id);
+        deathCounts.remove(id);
 
-        Bukkit.getScheduler().runTaskLater(this, this::checkWinCondition, 5L);
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            updateScoreboardAll();
+            checkWinCondition();
+        }, 5L);
     }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
         if (!running) return;
+        deathCounts.putIfAbsent(e.getPlayer().getUniqueId(), 0);
         updateScoreboardAll();
     }
 
@@ -471,10 +544,10 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
             }
             case "toggle" -> {
                 if (args.length < 2) {
-                    sender.sendMessage(ChatColor.YELLOW + "Usage: /" + label + " toggle <water|food>");
+                    sender.sendMessage(ChatColor.YELLOW + "Usage: /" + label + " toggle <water|food|deaths>");
                     return true;
                 }
-                toggleOption(sender, args[1].toLowerCase());
+                toggleOption(sender, args);
             }
             default -> sender.sendMessage(ChatColor.RED + "Unknown subcommand.");
         }
@@ -482,7 +555,9 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         return true;
     }
 
-    private void toggleOption(CommandSender sender, String opt) {
+    private void toggleOption(CommandSender sender, String[] args) {
+        String opt = args[1].toLowerCase();
+
         switch (opt) {
             case "water" -> {
                 boolean current = getConfig().getBoolean("give-water-bucket-on-start", true);
@@ -496,7 +571,31 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
                 saveConfig();
                 sender.sendMessage(ChatColor.GREEN + "give-food-on-start = " + (!current));
             }
-            default -> sender.sendMessage(ChatColor.RED + "Unknown toggle option. Use water/food.");
+            case "deaths" -> {
+                if (args.length < 3) {
+                    sender.sendMessage(ChatColor.YELLOW + "Usage: /ds toggle deaths <number>");
+                    return;
+                }
+                try {
+                    int val = Integer.parseInt(args[2]);
+                    if (val < 1) val = 1;
+
+                    getConfig().set("deaths-before-ghost", val);
+                    saveConfig();
+                    deathsBeforeGhost = val;
+
+                    sender.sendMessage(ChatColor.GREEN + "deaths-before-ghost = " + val);
+
+                    if (running) {
+                        Bukkit.broadcastMessage(ChatColor.GRAY + "Deaths before ghost is now: " + ChatColor.YELLOW + val);
+                        updateScoreboardAll();
+                    }
+
+                } catch (NumberFormatException ex) {
+                    sender.sendMessage(ChatColor.RED + "That is not a valid number.");
+                }
+            }
+            default -> sender.sendMessage(ChatColor.RED + "Unknown toggle option. Use water/food/deaths.");
         }
     }
 
@@ -509,7 +608,11 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
         }
 
         if (args.length == 2 && args[0].equalsIgnoreCase("toggle")) {
-            return partial(args[1], Arrays.asList("water", "food"));
+            return partial(args[1], Arrays.asList("water", "food", "deaths"));
+        }
+
+        if (args.length == 3 && args[0].equalsIgnoreCase("toggle") && args[1].equalsIgnoreCase("deaths")) {
+            return Arrays.asList("1", "2", "3", "4", "5");
         }
 
         return Collections.emptyList();
