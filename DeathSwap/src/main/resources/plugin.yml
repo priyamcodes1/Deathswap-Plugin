@@ -1,0 +1,19 @@
+name: DeathSwap
+version: 1.0
+main: me.priyam.deathswap.DeathSwapPlugin
+api-version: "1.21"
+author: Priyam
+
+commands:
+  deathswap:
+    description: DeathSwap main command
+    usage: /deathswap <start|stop|reload|toggle>
+    permission: deathswap.admin
+  ds:
+    description: DeathSwap alias command
+    usage: /ds <start|stop|reload|toggle>
+    permission: deathswap.admin
+
+permissions:
+  deathswap.admin:
+    default: op
