@@ -5,3 +5,7 @@ give-food-on-start: true
 
 food-item: COOKED_BEEF
 food-amount: 16
+
+# How many deaths allowed before player becomes a ghost (eliminated)
+# Default: 1 (first death = ghost instantly)
+deaths-before-ghost: 1
