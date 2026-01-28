@@ -92,18 +92,25 @@ public class DeathSwapPlugin extends JavaPlugin implements Listener, CommandExec
             objective.getScore("  ").setScore(score--);
             objective.getScore(ChatColor.GOLD + "Deaths:").setScore(score--);
 
-            deathCounts.entrySet().stream()
-                    .filter(e -> e.getValue() > 0)
-                    .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
-                    .limit(6)
-                    .forEach(e -> {
-                        Player p = Bukkit.getPlayer(e.getKey());
-                        if (p != null) {
-                            objective.getScore(ChatColor.YELLOW + p.getName() +
-                                    ChatColor.GRAY + ": " +
-                                    ChatColor.RED + e.getValue()).setScore(score--);
-                        }
-                    });
+            List<Map.Entry<UUID, Integer>> list = new ArrayList<>(deathCounts.entrySet());
+list.removeIf(e -> e.getValue() <= 0);
+list.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+
+int shown = 0;
+for (Map.Entry<UUID, Integer> e : list) {
+    if (shown >= 6) break;
+
+    Player p = Bukkit.getPlayer(e.getKey());
+    if (p == null) continue;
+
+    String line = ChatColor.YELLOW + p.getName()
+            + ChatColor.GRAY + ": "
+            + ChatColor.RED + e.getValue();
+
+    objective.getScore(line).setScore(score--);
+    shown++;
+}
+
         }
 
         for (Player p : Bukkit.getOnlinePlayers()) {
